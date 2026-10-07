@@ -14,7 +14,7 @@ export const DEFAULT_CONFIG = {
     visibleSheets: 5,     // sheets drawn under each open page
   },
   material: { metalness: .17, showThrough: .04, inkGloss: .33 },
-  cover: { hard: false, overhang: .025, raise: .008, roughness: .4 },   // hard cover: rigid boards, slightly larger than the pages
+  cover: { hard: false, overhang: .014, thickness: .015, raise: .006, roughness: .4 },   // hard cover: rigid boards with real thickness, a few mm larger than the pages
   specks: { size: 1.46, darken: .17, roughen: .33 },          // the "original" paper only
   shape: { liftMaxX: .14, liftMaxZ: .04, liftDipX: .58, liftDipZ: .035, liftMidX: .72, liftMidZ: .04, liftEdgeZ: .03, wrinkle: .13 },
   light: { ambient: 1.5, sky: '#ffffff', ground: '#a1aeaf', sun: 2, sunColor: '#ffffff', sunX: -3.5, sunY: 1.3, sunZ: 4.1, shadow: .15 },
@@ -101,7 +101,7 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     LIFT_MID_Z: { value: 0 }, LIFT_EDGE_Z: { value: 0 }, DEFORM: { value: 0 },
     PAPER_TRANSPARENCY: { value: 0 }, INK_GLOSS: { value: 0 }, PATTERN_SIZE: { value: 0 }, TEXTURE_COLOR: { value: 0 }, PATTERN_ROUGHNESS: { value: 0 },
     uPatternTex: { value: grain }, uSpecks: { value: 0 },
-    uCoverScale: { value: new THREE.Vector2(1, 1) }, uBoardZ: { value: .05 },
+    uCoverScale: { value: new THREE.Vector2(1, 1) }, uBoardZ: { value: .05 }, uThickness: { value: 0 },
     uToneMap: { value: flat }, uToneMean: { value: .5 }, uToneStd: { value: .1 }, uContrast: { value: 0 }, uToneRepeat: { value: new THREE.Vector2(1, ASPECT) },
   };
   const CONSTS = `
@@ -115,10 +115,12 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     ${CONSTS}
     uniform float uFlipProgress, uWrinkleSide, uBendAngle, uDirection, uStackLift;
     uniform vec2 uFold, uCurl, uFlipRotation;
-    uniform float uRigid, uBoardZ;
+    uniform float uRigid, uBoardZ, uThickness;
     uniform vec2 uCoverScale;
     varying vec2 vGrainUv;
+    varying float vThick;
     attribute vec3 aNoise;
+    attribute float aThick;
     const float HALF_PI = 1.57079633;
 
     vec3 _sheetPosition(vec2 uv, float rawNoise) {
@@ -134,7 +136,8 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
       else lift = mix(LIFT_MID_Z, LIFT_EDGE_Z, 1.0 - cos((uv.x - LIFT_MID_X) / (1.0 - LIFT_MID_X) * HALF_PI));
       lift *= uStackLift;
       // a board stays flat: on top of its stack when it's the top sheet, on the table when it's the bottom one
-      lift = mix(lift, uBoardZ * clamp((uStackLift - 0.31) / 0.69, 0.0, 1.0), uRigid);
+      float onTop = clamp((uStackLift - 0.31) / 0.69, 0.0, 1.0);
+      lift = mix(lift, uBoardZ * onTop, uRigid);
 
       float localU =  flatX * uFold.x + flatY * uFold.y;
       float localV = -flatX * uFold.y + flatY * uFold.x;
@@ -144,6 +147,8 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
       float versine = abs(angle) < 1e-4 ? 0.0 : (1.0 - cos(angle)) / angle;
       float curledU = localU - beyond + beyond * sinc;
       float pz = -uDirection * beyond * versine;
+      // board thickness: grows upward when the board is on top of its stack, downward when it's underneath
+      pz += uRigid * (aThick - (1.0 - onTop)) * uThickness;
       float px = curledU * uFold.x - localV * uFold.y;
       float py = curledU * uFold.y + localV * uFold.x;
 
@@ -169,6 +174,18 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     return geo;
   })();
 
+  // a board is a box: top and bottom faces plus four edges; the shader places it from uv and aThick alone
+  const boardGeometry = (() => {
+    const geo = new THREE.BoxGeometry(1, ASPECT, 1), pos = geo.attributes.position, n = pos.count;
+    const uv = new Float32Array(n * 2), thick = new Float32Array(n);
+    for (let i = 0; i < n; i++) { uv[2 * i] = pos.getX(i) + .5; uv[2 * i + 1] = pos.getY(i) / ASPECT + .5; thick[i] = pos.getZ(i) + .5; }
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.setAttribute('aThick', new THREE.BufferAttribute(thick, 1));
+    geo.setAttribute('aNoise', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    return geo;
+  })();
+  geometry.setAttribute('aThick', new THREE.BufferAttribute(new Float32Array(geometry.attributes.uv.count), 1));
+
   const stackLift = (i, t) => .31 + .69 * (SHEETS > 1 ? (i + (SHEETS - 1 - 2 * i) * (1 - t)) / (SHEETS - 1) : 1);
   function makeSheet(i) {
     const u = {
@@ -181,7 +198,11 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
       Object.assign(sh.uniforms, u);
       sh.vertexShader = VERTEX + sh.vertexShader
         .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
-          {
+          if (uRigid > 0.5) {
+            // a board only rotates about the spine, so its normal is the mesh normal rotated the same way
+            objectNormal = vec3(normal.x * uFlipRotation.x - normal.z * uFlipRotation.y, normal.y, normal.x * uFlipRotation.y + normal.z * uFlipRotation.x);
+            _sheetP = _sheetPosition(uv, 0.0);
+          } else {
             vec2 du = vec2(NORMAL_EPSILON, NORMAL_EPSILON / SHEET_ASPECT);
             vec3 p0 = _sheetPosition(uv, aNoise.x);
             vec3 px = _sheetPosition(uv + vec2(du.x, 0.0), aNoise.y);
@@ -189,12 +210,13 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
             objectNormal = normalize(cross(px - p0, py - p0));
             _sheetP = p0;
           }`)
-        .replace('#include <begin_vertex>', 'vec3 transformed = _sheetP;\nvGrainUv = uv;');
+        .replace('#include <begin_vertex>', 'vec3 transformed = _sheetP;\nvGrainUv = uv;\nvThick = aThick;');
       sh.fragmentShader = CONSTS + `
         uniform sampler2D uBackMap, uPatternTex, uToneMap;
-        uniform float uToneMean, uToneStd, uContrast;
+        uniform float uToneMean, uToneStd, uContrast, uRigid;
         uniform vec2 uToneRepeat;
         varying vec2 vGrainUv;
+        varying float vThick;
       ` + sh.fragmentShader
         .replace('#include <normal_fragment_begin>', `
           vec3 normal = normalize(vNormal);
@@ -206,8 +228,10 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
           #ifdef USE_MAP
             vec4 frontColor = texture2D(map, vMapUv);
             vec4 backColor = texture2D(uBackMap, vec2(1.0 - vMapUv.x, vMapUv.y));
-            vec4 faceColor = gl_FrontFacing ? frontColor : backColor;
-            vec4 otherColor = gl_FrontFacing ? backColor : frontColor;
+            bool facing = gl_FrontFacing;
+            if (uRigid > 0.5 && vThick < 0.5) facing = !facing;   // the underside of a board is its own front face
+            vec4 faceColor = facing ? frontColor : backColor;
+            vec4 otherColor = facing ? backColor : frontColor;
             vec4 sheetColor = faceColor;
             sheetColor.rgb *= mix(vec3(1.0), otherColor.rgb, PAPER_TRANSPARENCY);
             diffuseColor *= sheetColor;
@@ -247,7 +271,9 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     shared.PATTERN_SIZE.value = sp.size; shared.TEXTURE_COLOR.value = sp.darken; shared.PATTERN_ROUGHNESS.value = sp.roughen;
     for (const sh of sheets) sh.mat.metalness = m.metalness;
     const c = cfg.cover;
-    sheets.forEach((sh, i) => { sh.uniforms.uRigid.value = isRigid(i) ? 1 : 0; });
+    sheets.forEach((sh, i) => { const r = isRigid(i); sh.uniforms.uRigid.value = r ? 1 : 0; sh.mesh.geometry = r ? boardGeometry : geometry; });
+    shared.uThickness.value = c.thickness;
+    ground.position.z = -(c.hard ? c.thickness : 0) - 1e-5;   // the bottom board sits below the table line
     shared.uCoverScale.value.set(1 + c.overhang, 1 + 2 * c.overhang / ASPECT);
     shared.uBoardZ.value = s.liftMaxZ + .5 * s.wrinkle + c.raise;   // clear of the highest page wrinkle
     applyRoughness();
@@ -615,7 +641,7 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
       for (const t of loaded.values()) t.dispose();
       for (const t of solids.values()) t.dispose();
       paperMaps.tone?.dispose(); paperMaps.height?.dispose(); flat.dispose(); grain.dispose();
-      geometry.dispose(); ground.geometry.dispose(); ground.material.dispose(); renderer.dispose();
+      geometry.dispose(); boardGeometry.dispose(); ground.geometry.dispose(); ground.material.dispose(); renderer.dispose();
       canvas.remove(); hit.remove();
     },
   };
