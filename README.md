@@ -46,6 +46,7 @@ Set these as attributes on the tag:
 |---|---|---|
 | `paper` | Paper texture: `original`, `smooth`, `fine`, `laid`, `cotton`, `fiber`, `recycled` | `paper="cotton"` |
 | `aspect` | Page height ÷ width | `aspect="1.414"` (A4) |
+| `hardcover` | Front and back covers become stiff boards, a bit larger than the pages | |
 | `auto-open` | Opens the cover once it loads | |
 | `keyboard` | Arrow keys turn pages | |
 | `start` | Opens at this sheet | `start="3"` |

@@ -14,6 +14,7 @@ export const DEFAULT_CONFIG = {
     visibleSheets: 5,     // sheets drawn under each open page
   },
   material: { metalness: .17, showThrough: .04, inkGloss: .33 },
+  cover: { hard: false, overhang: .025, raise: .008, roughness: .4 },   // hard cover: rigid boards, slightly larger than the pages
   specks: { size: 1.46, darken: .17, roughen: .33 },          // the "original" paper only
   shape: { liftMaxX: .14, liftMaxZ: .04, liftDipX: .58, liftDipZ: .035, liftMidX: .72, liftMidZ: .04, liftEdgeZ: .03, wrinkle: .13 },
   light: { ambient: 1.5, sky: '#ffffff', ground: '#a1aeaf', sun: 2, sunColor: '#ffffff', sunX: -3.5, sunY: 1.3, sunZ: 4.1, shadow: .15 },
@@ -100,6 +101,7 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     LIFT_MID_Z: { value: 0 }, LIFT_EDGE_Z: { value: 0 }, DEFORM: { value: 0 },
     PAPER_TRANSPARENCY: { value: 0 }, INK_GLOSS: { value: 0 }, PATTERN_SIZE: { value: 0 }, TEXTURE_COLOR: { value: 0 }, PATTERN_ROUGHNESS: { value: 0 },
     uPatternTex: { value: grain }, uSpecks: { value: 0 },
+    uCoverScale: { value: new THREE.Vector2(1, 1) }, uBoardZ: { value: .05 },
     uToneMap: { value: flat }, uToneMean: { value: .5 }, uToneStd: { value: .1 }, uContrast: { value: 0 }, uToneRepeat: { value: new THREE.Vector2(1, ASPECT) },
   };
   const CONSTS = `
@@ -113,15 +115,17 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     ${CONSTS}
     uniform float uFlipProgress, uWrinkleSide, uBendAngle, uDirection, uStackLift;
     uniform vec2 uFold, uCurl, uFlipRotation;
+    uniform float uRigid, uBoardZ;
+    uniform vec2 uCoverScale;
     varying vec2 vGrainUv;
     attribute vec3 aNoise;
     const float HALF_PI = 1.57079633;
 
     vec3 _sheetPosition(vec2 uv, float rawNoise) {
-      float flatX = uv.x;
-      float flatY = (uv.y - 0.5) * SHEET_ASPECT;
+      float flatX = uv.x * mix(1.0, uCoverScale.x, uRigid);
+      float flatY = (uv.y - 0.5) * SHEET_ASPECT * mix(1.0, uCoverScale.y, uRigid);
       float wrinkle = mix(rawNoise, 1.0 - rawNoise, uFlipProgress) - .5;
-      wrinkle *= smoothstep(0.0, 0.35, uv.x) * DEFORM * uStackLift;
+      wrinkle *= smoothstep(0.0, 0.35, uv.x) * DEFORM * uStackLift * (1.0 - uRigid);
 
       float lift;
       if (uv.x <= LIFT_MAX_X) lift = LIFT_MAX_Z * sin(uv.x / LIFT_MAX_X * HALF_PI);
@@ -129,6 +133,8 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
       else if (uv.x <= LIFT_MID_X) lift = mix(LIFT_DIP_Z, LIFT_MID_Z, smoothstep(LIFT_DIP_X, LIFT_MID_X, uv.x));
       else lift = mix(LIFT_MID_Z, LIFT_EDGE_Z, 1.0 - cos((uv.x - LIFT_MID_X) / (1.0 - LIFT_MID_X) * HALF_PI));
       lift *= uStackLift;
+      // a board stays flat: on top of its stack when it's the top sheet, on the table when it's the bottom one
+      lift = mix(lift, uBoardZ * clamp((uStackLift - 0.31) / 0.69, 0.0, 1.0), uRigid);
 
       float localU =  flatX * uFold.x + flatY * uFold.y;
       float localV = -flatX * uFold.y + flatY * uFold.x;
@@ -168,7 +174,7 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     const u = {
       uDirection: { value: 1 }, uStackLift: { value: 1 }, uFlipProgress: { value: 0 }, uWrinkleSide: { value: -1 }, uBendAngle: { value: 0 },
       uFold: { value: new THREE.Vector2(1, 0) }, uCurl: { value: new THREE.Vector2(0, 1) }, uFlipRotation: { value: new THREE.Vector2(1, 0) },
-      uBackMap: { value: blankTex(2 * i + 1) }, ...shared,
+      uBackMap: { value: blankTex(2 * i + 1) }, uRigid: { value: 0 }, ...shared,
     };
     const mat = new THREE.MeshStandardMaterial({ map: blankTex(2 * i), side: THREE.DoubleSide, metalness: cfg.material.metalness, roughness: .5, bumpMap: flat, bumpScale: 0 });
     mat.onBeforeCompile = sh => {
@@ -240,12 +246,19 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     shared.PAPER_TRANSPARENCY.value = m.showThrough; shared.INK_GLOSS.value = m.inkGloss;
     shared.PATTERN_SIZE.value = sp.size; shared.TEXTURE_COLOR.value = sp.darken; shared.PATTERN_ROUGHNESS.value = sp.roughen;
     for (const sh of sheets) sh.mat.metalness = m.metalness;
+    const c = cfg.cover;
+    sheets.forEach((sh, i) => { sh.uniforms.uRigid.value = isRigid(i) ? 1 : 0; });
+    shared.uCoverScale.value.set(1 + c.overhang, 1 + 2 * c.overhang / ASPECT);
+    shared.uBoardZ.value = s.liftMaxZ + .5 * s.wrinkle + c.raise;   // clear of the highest page wrinkle
+    applyRoughness();
     hemi.intensity = l.ambient; hemi.color.set(l.sky); hemi.groundColor.set(l.ground);
     sun.intensity = l.sun; sun.color.set(l.sunColor); sun.position.set(l.sunX, l.sunY, l.sunZ);
     ground.material.opacity = l.shadow;
     frameCamera();
     dirty = true;
   }
+  const isRigid = i => cfg.cover.hard && SHEETS > 1 && (i === 0 || i === SHEETS - 1);
+  function applyRoughness() { sheets.forEach((sh, i) => { sh.mat.roughness = isRigid(i) ? cfg.cover.roughness : roughness; }); dirty = true; }
   function frameCamera() {
     const w = canvas.clientWidth || 1, h = canvas.clientHeight || 1, fov = cfg.book.perspective;
     const dist = 2.99 * Math.tan(20 * Math.PI / 180) / Math.tan(fov / 2 * Math.PI / 180);   // keep the book the same size as fov changes
@@ -285,7 +298,8 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     if (contrast != null) shared.uContrast.value = contrast;
     if (b != null) bump = b;
     if (r != null) roughness = r;
-    for (const s of sheets) { s.mat.bumpScale = bump; s.mat.roughness = roughness; }
+    for (const s of sheets) s.mat.bumpScale = bump;
+    applyRoughness();
     for (const [k, v] of Object.entries({ scale, contrast, bump: b, roughness: r })) if (v != null) paperNow[k] = v;
     dirty = true;
     return { ...paperNow };
@@ -307,6 +321,7 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     return (t.direction > 0 ? t.flipProgress > .5 : t.flipProgress < .5) ? undefined : t.curveTarget;
   }
   function curveFromPoint(i, p) {
+    if (isRigid(i)) return { curlArc: 0, curlAngleDeg: 0 };   // boards don't bend
     const w = sheets[i].wobble, lead = leadCurve(i);
     let deg = 0;
     if (p) {
@@ -498,7 +513,7 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     if (moving || dirty) {
       for (let i = 0; i < SHEETS; i++) {
         const m = sheets[i].mesh, d = i >= turned ? i - turned : turned - 1 - i, live = isAnimating(i) || (drag !== null && drag.sheet === i);
-        m.visible = d <= cfg.book.visibleSheets || live;
+        m.visible = d <= cfg.book.visibleSheets || live || isRigid(i);   // boards always show, framing the pages
         const cast = d < 3 || live; if (m.castShadow !== cast) m.castShadow = cast;
         m.renderOrder = d;
       }

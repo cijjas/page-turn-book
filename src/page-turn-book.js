@@ -7,7 +7,7 @@
 // Pages come from child <img> elements, or from the `pages` property (URLs, images, canvases), or from
 // `renderPage(index, { width, height })` for pages you draw yourself. Page 0 is the cover; even pages sit on the right.
 //
-// Attributes: paper, aspect, page-width, start, auto-open, keyboard, fit, perspective
+// Attributes: paper, aspect, page-width, start, auto-open, keyboard, fit, perspective, hardcover
 // Properties: pages, renderPage, pageColor, config (any part of DEFAULT_CONFIG)
 // Methods:    next(), prev(), jumpTo(sheet), goToPage(index), setPaper(name|object), tunePaper({…}), set(path, value)
 // Events:     spread → detail { sheet, left, right };  ready
@@ -20,7 +20,7 @@ export { DEFAULT_CONFIG, PAPERS };
 const REBUILD = new Set(['aspect', 'page-width']);
 
 export class PageTurnBook extends HTMLElement {
-  static observedAttributes = ['paper', 'aspect', 'page-width', 'start', 'auto-open', 'fit', 'perspective'];
+  static observedAttributes = ['paper', 'aspect', 'page-width', 'start', 'auto-open', 'fit', 'perspective', 'hardcover'];
 
   #engine = null; #keys = e => this.#onKey(e); #pages = null; #render = null; #pageColor = '#f3efe6'; #config = {}; #queued = false; #sheet = 0; #count = 0;
 
@@ -45,6 +45,7 @@ export class PageTurnBook extends HTMLElement {
     if (name === 'paper') this.#engine.setPaper(value || undefined);
     if (name === 'fit') this.#engine.set('book.fit', +value);
     if (name === 'perspective') this.#engine.set('book.perspective', +value);
+    if (name === 'hardcover') this.#engine.set('cover.hard', value !== null);
   }
 
   // ---- properties
@@ -110,7 +111,7 @@ export class PageTurnBook extends HTMLElement {
       pageCount,
       renderPage: async (i, size) => toPageCanvas(await render(i, size), size),
       pageColor: this.#pageColor,
-      config: { ...this.#config, book },
+      config: { ...this.#config, book, cover: { ...this.#config.cover, ...(this.hasAttribute('hardcover') ? { hard: true } : {}) } },
       paper: keepPaper ?? this.getAttribute('paper') ?? undefined,
       start: keepSheet ?? +(this.getAttribute('start') ?? 0),
       autoOpen: keepSheet === null && this.hasAttribute('auto-open'),
