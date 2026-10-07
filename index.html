@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>page-turn-book · playground</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap">
+<style>
+  @font-face { font-family: "Paper Mono"; src: url("fonts/PaperMonoVF.ttf") format("truetype"); font-weight: 100 800; font-display: swap; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body { background: var(--stage, #f6f6f3); font: 12px ui-monospace, Menlo, monospace; }
+  #stage { position: absolute; inset: 0 var(--gui-width, 300px) 0 0; display: grid; place-items: center; }
+  page-turn-book { width: var(--book-w, 100%); height: var(--book-h, 100%); outline: 1px dashed var(--outline, transparent); }
+  #status { position: absolute; left: 12px; bottom: 10px; color: #8a8f98; letter-spacing: .04em; }
+  @media (max-width: 760px) { #stage { inset: 0; } }
+</style>
+</head>
+<body>
+<div id="stage"><page-turn-book id="book" keyboard auto-open></page-turn-book></div>
+<div id="status"></div>
+<script type="module" src="/demo/main.js"></script>
+</body>
+</html>
