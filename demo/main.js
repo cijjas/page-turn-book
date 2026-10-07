@@ -13,7 +13,7 @@ const STORE = 'page-turn-book-playground';
 const RANGES = {
   book: { aspect: [.5, 2, .01, '*'], pageWidth: [256, 2048, 64, '*'], fit: [.3, 1.3, .01], perspective: [8, 100, 1], visibleSheets: [1, 30, 1] },
   material: { metalness: [0, 1, .01], showThrough: [0, .3, .005], inkGloss: [0, 1, .01] },
-  cover: { overhang: [0, .06, .001], thickness: [0, .06, .001], raise: [0, .05, .001], roughness: [0, 1, .01] },
+  cover: { overhang: [0, .06, .001], thickness: [0, .06, .001], raise: [0, .05, .001], pressPages: [0, 1, .01], grain: [.25, 8, .05], contrast: [0, .3, .001], bump: [0, 3, .01], roughness: [0, 1, .01], metalness: [0, 1, .01] },
   specks: { size: [.2, 8, .01], darken: [0, 1, .01], roughen: [0, 1, .01] },
   shape: { liftMaxX: [.01, 1, .01], liftMaxZ: [0, .2, .001], liftDipX: [.01, 1, .01], liftDipZ: [0, .2, .001], liftMidX: [.01, .99, .01], liftMidZ: [0, .2, .001], liftEdgeZ: [0, .2, .001], wrinkle: [0, .6, .005] },
   light: { ambient: [0, 6, .05], sun: [0, 10, .05], sunX: [-10, 10, .1], sunY: [-10, 10, .1], sunZ: [.5, 12, .1], shadow: [0, 1, .01] },
@@ -100,6 +100,7 @@ for (const [group, keys] of Object.entries(RANGES)) {
     else c.onChange(v => { book.set(`${group}.${key}`, v); save(); });
   }
   for (const [key, v] of Object.entries(state.config[group])) if (typeof v === 'boolean') resettable(f.add(state.config[group], key), DEFAULT_CONFIG[group][key]).name(key === 'hard' ? 'hard cover' : key).onChange(b => { book.set(`${group}.${key}`, b); save(); });
+  for (const [key, v] of Object.entries(state.config[group])) if (typeof v === 'string' && !v.startsWith('#')) resettable(f.add(state.config[group], key, Object.keys(PAPERS)), DEFAULT_CONFIG[group][key]).onChange(t => { book.set(`${group}.${key}`, t); save(); });
   for (const [key, v] of Object.entries(state.config[group])) if (typeof v === 'string' && v.startsWith('#')) resettable(f.addColor(state.config[group], key), DEFAULT_CONFIG[group][key]).onChange(c => { book.set(`${group}.${key}`, c); save(); });
   if (!['book', 'light', 'cover'].includes(group)) f.close();
 }

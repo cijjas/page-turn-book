@@ -14,7 +14,9 @@ export const DEFAULT_CONFIG = {
     visibleSheets: 5,     // sheets drawn under each open page
   },
   material: { metalness: .17, showThrough: .04, inkGloss: .33 },
-  cover: { hard: false, overhang: .014, thickness: .015, raise: .006, roughness: .4 },   // hard cover: rigid boards with real thickness, a few mm larger than the pages
+  // hard cover: rigid boards with real thickness, a few mm larger than the pages, with their own surface
+  cover: { hard: false, overhang: .014, thickness: .015, raise: .004, pressPages: .35,
+    texture: 'smooth', color: '#ffffff', grain: 1, contrast: .02, bump: .3, roughness: .45, metalness: 0 },
   specks: { size: 1.46, darken: .17, roughen: .33 },          // the "original" paper only
   shape: { liftMaxX: .14, liftMaxZ: .04, liftDipX: .58, liftDipZ: .035, liftMidX: .72, liftMidZ: .04, liftEdgeZ: .03, wrinkle: .13 },
   light: { ambient: 1.5, sky: '#ffffff', ground: '#a1aeaf', sun: 2, sunColor: '#ffffff', sunX: -3.5, sunY: 1.3, sunZ: 4.1, shadow: .15 },
@@ -100,16 +102,15 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     LIFT_MAX_X: { value: 0 }, LIFT_MAX_Z: { value: 0 }, LIFT_DIP_X: { value: 0 }, LIFT_DIP_Z: { value: 0 }, LIFT_MID_X: { value: 0 },
     LIFT_MID_Z: { value: 0 }, LIFT_EDGE_Z: { value: 0 }, DEFORM: { value: 0 },
     PAPER_TRANSPARENCY: { value: 0 }, INK_GLOSS: { value: 0 }, PATTERN_SIZE: { value: 0 }, TEXTURE_COLOR: { value: 0 }, PATTERN_ROUGHNESS: { value: 0 },
-    uPatternTex: { value: grain }, uSpecks: { value: 0 },
+    uPatternTex: { value: grain }, uFloor: { value: -1e9 },
     uCoverScale: { value: new THREE.Vector2(1, 1) }, uBoardZ: { value: .05 }, uThickness: { value: 0 },
-    uToneMap: { value: flat }, uToneMean: { value: .5 }, uToneStd: { value: .1 }, uContrast: { value: 0 }, uToneRepeat: { value: new THREE.Vector2(1, ASPECT) },
   };
   const CONSTS = `
     const float SHEET_ASPECT = ${ASPECT.toFixed(5)};
     const float NORMAL_EPSILON = 0.03;
     const float SHADOW_OFFSET_X = 0.004;
     uniform float LIFT_MAX_X, LIFT_MAX_Z, LIFT_DIP_X, LIFT_DIP_Z, LIFT_MID_X, LIFT_MID_Z, LIFT_EDGE_Z, DEFORM;
-    uniform float PAPER_TRANSPARENCY, INK_GLOSS, PATTERN_SIZE, TEXTURE_COLOR, PATTERN_ROUGHNESS, uSpecks;
+    uniform float PAPER_TRANSPARENCY, INK_GLOSS, PATTERN_SIZE, TEXTURE_COLOR, PATTERN_ROUGHNESS, uSpecks, uFloor;
   `;
   const VERTEX = `
     ${CONSTS}
@@ -154,6 +155,7 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
 
       vec3 p = vec3(px * uFlipRotation.x - pz * uFlipRotation.y, py, px * uFlipRotation.y + pz * uFlipRotation.x);
       p.z += lift + uWrinkleSide * wrinkle;
+      p.z = mix(max(p.z, uFloor), p.z, uRigid);   // pages can't sink into the table or a board
       return p;
     }
     vec3 _sheetP;
@@ -192,6 +194,8 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
       uDirection: { value: 1 }, uStackLift: { value: 1 }, uFlipProgress: { value: 0 }, uWrinkleSide: { value: -1 }, uBendAngle: { value: 0 },
       uFold: { value: new THREE.Vector2(1, 0) }, uCurl: { value: new THREE.Vector2(0, 1) }, uFlipRotation: { value: new THREE.Vector2(1, 0) },
       uBackMap: { value: blankTex(2 * i + 1) }, uRigid: { value: 0 }, ...shared,
+      uSpecks: { value: 0 }, uToneMap: { value: flat }, uToneMean: { value: .5 }, uToneStd: { value: .1 }, uContrast: { value: 0 },
+      uToneRepeat: { value: new THREE.Vector2(1, ASPECT) }, uTint: { value: new THREE.Color('#ffffff') }, uTintSide: { value: 1 },
     };
     const mat = new THREE.MeshStandardMaterial({ map: blankTex(2 * i), side: THREE.DoubleSide, metalness: cfg.material.metalness, roughness: .5, bumpMap: flat, bumpScale: 0 });
     mat.onBeforeCompile = sh => {
@@ -214,6 +218,8 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
       sh.fragmentShader = CONSTS + `
         uniform sampler2D uBackMap, uPatternTex, uToneMap;
         uniform float uToneMean, uToneStd, uContrast, uRigid;
+        uniform vec3 uTint;
+        uniform float uTintSide;
         uniform vec2 uToneRepeat;
         varying vec2 vGrainUv;
         varying float vThick;
@@ -238,7 +244,10 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
             inkAmount = 1.0 - dot(faceColor.rgb, vec3(0.299, 0.587, 0.114));
           #endif
           float paperTone = dot(texture2D(uToneMap, vGrainUv * uToneRepeat).rgb, vec3(0.299, 0.587, 0.114));
-          diffuseColor.rgb *= clamp(1.0 + (paperTone - uToneMean) / uToneStd * uContrast, 0.0, 2.0);`)
+          diffuseColor.rgb *= clamp(1.0 + (paperTone - uToneMean) / uToneStd * uContrast, 0.0, 2.0);
+          // the cover colour goes on the outside of a board only; the inside keeps the page's own look
+          float outside = (facing ? 1.0 : -1.0) * uTintSide > 0.0 ? 1.0 : 0.0;
+          diffuseColor.rgb *= mix(vec3(1.0), uTint, outside);`)
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
           roughnessFactor *= mix(1., 0., inkAmount * INK_GLOSS);
           float pattern = texture2D(uPatternTex, vGrainUv * PATTERN_SIZE * vec2(1.0, SHEET_ASPECT)).r;
@@ -269,14 +278,17 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     shared.LIFT_MID_X.value = s.liftMidX; shared.LIFT_MID_Z.value = s.liftMidZ; shared.LIFT_EDGE_Z.value = s.liftEdgeZ; shared.DEFORM.value = s.wrinkle;
     shared.PAPER_TRANSPARENCY.value = m.showThrough; shared.INK_GLOSS.value = m.inkGloss;
     shared.PATTERN_SIZE.value = sp.size; shared.TEXTURE_COLOR.value = sp.darken; shared.PATTERN_ROUGHNESS.value = sp.roughen;
-    for (const sh of sheets) sh.mat.metalness = m.metalness;
     const c = cfg.cover;
-    sheets.forEach((sh, i) => { const r = isRigid(i); sh.uniforms.uRigid.value = r ? 1 : 0; sh.mesh.geometry = r ? boardGeometry : geometry; });
+    if (c.hard) shared.DEFORM.value *= c.pressPages;              // boards press the pages flatter
+    shared.uFloor.value = c.hard ? .002 : -1e9;
     shared.uThickness.value = c.thickness;
-    ground.position.z = -(c.hard ? c.thickness : 0) - 1e-5;   // the bottom board sits below the table line
+    ground.position.z = -(c.hard ? c.thickness : 0) - 1e-5;      // the bottom board sits below the table line
     shared.uCoverScale.value.set(1 + c.overhang, 1 + 2 * c.overhang / ASPECT);
-    shared.uBoardZ.value = s.liftMaxZ + .5 * s.wrinkle + c.raise;   // clear of the highest page wrinkle
-    applyRoughness();
+    shared.uBoardZ.value = s.liftMaxZ + .5 * shared.DEFORM.value + c.raise;   // clear of the highest page wrinkle
+    if (c.hard && c.texture !== coverLoaded) loadCover();
+    Object.assign(coverPaper, { scale: c.grain, contrast: c.contrast, bump: c.bump, roughness: c.roughness });
+    coverPaper.height.repeat.set(c.grain, c.grain * ASPECT);
+    refreshSheets();
     hemi.intensity = l.ambient; hemi.color.set(l.sky); hemi.groundColor.set(l.ground);
     sun.intensity = l.sun; sun.color.set(l.sunColor); sun.position.set(l.sunX, l.sunY, l.sunZ);
     ground.material.opacity = l.shadow;
@@ -284,7 +296,18 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     dirty = true;
   }
   const isRigid = i => cfg.cover.hard && SHEETS > 1 && (i === 0 || i === SHEETS - 1);
-  function applyRoughness() { sheets.forEach((sh, i) => { sh.mat.roughness = isRigid(i) ? cfg.cover.roughness : roughness; }); dirty = true; }
+  // give every sheet its surface: pages get the page paper, boards the cover surface
+  function refreshSheets() {
+    sheets.forEach((sh, i) => {
+      const r = isRigid(i), P = r ? coverPaper : pagePaper, u = sh.uniforms;
+      u.uRigid.value = r ? 1 : 0; sh.mesh.geometry = r ? boardGeometry : geometry;
+      u.uSpecks.value = P.specks ? 1 : 0; u.uToneMap.value = P.tone; u.uToneMean.value = P.mean; u.uToneStd.value = P.std;
+      u.uContrast.value = P.contrast; u.uToneRepeat.value.set(P.scale, P.scale * ASPECT);
+      u.uTint.value.set(r ? cfg.cover.color : '#ffffff'); u.uTintSide.value = i === 0 ? 1 : -1;
+      sh.mat.bumpMap = P.height; sh.mat.bumpScale = P.bump; sh.mat.roughness = P.roughness; sh.mat.metalness = r ? cfg.cover.metalness : cfg.material.metalness;
+    });
+    dirty = true;
+  }
   function frameCamera() {
     const w = canvas.clientWidth || 1, h = canvas.clientHeight || 1, fov = cfg.book.perspective;
     const dist = 2.99 * Math.tan(20 * Math.PI / 180) / Math.tan(fov / 2 * Math.PI / 180);   // keep the book the same size as fov changes
@@ -298,37 +321,39 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
   }
   const spreadPx = () => { const visH = 2 * camera.position.z * Math.tan(camera.fov / 2 * Math.PI / 180); return canvas.getBoundingClientRect().width * 2 * camera.zoom / (visH * camera.aspect); };
 
-  // ---- paper
-  let paperMaps = {}, bump = 0, roughness = .5, paperNow = {}, paperToken = 0;
+  // ---- paper: one surface for the pages, another for the boards
+  const newSurface = () => ({ tone: flat, height: flat, specks: false, mean: .5, std: .1, scale: 1, contrast: 0, bump: 0, roughness: .5 });
+  const pagePaper = newSurface(), coverPaper = newSurface();
+  let paperNow = {}, paperToken = 0, coverToken = 0, coverLoaded = null;
+  const makeTex = src => { const t = src instanceof HTMLCanvasElement ? new THREE.CanvasTexture(src) : new THREE.Texture(src); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = maxAniso; t.needsUpdate = true; return t; };
+  function fillSurface(P, p) {
+    if (P.tone !== flat) P.tone.dispose(); if (P.height !== flat && P.height !== P.tone) P.height.dispose();
+    if (p.spec.specks || !p.tone) Object.assign(P, { tone: flat, height: flat, specks: !!p.spec.specks, mean: .5, std: .1 });
+    else { const tone = makeTex(p.tone); Object.assign(P, { tone, height: p.height === p.tone ? tone : makeTex(p.height), specks: false, mean: p.mean, std: p.std }); }
+  }
   async function setPaper(input) {
     const token = ++paperToken;
     const p = await loadPaper(input);
     if (destroyed || token !== paperToken) return p.spec;
-    paperMaps.tone?.dispose(); if (paperMaps.height !== paperMaps.tone) paperMaps.height?.dispose();
-    paperMaps = {};
-    if (p.spec.specks || !p.tone) {
-      shared.uSpecks.value = p.spec.specks ? 1 : 0; shared.uToneMap.value = flat;
-      for (const s of sheets) s.mat.bumpMap = flat;
-    } else {
-      const make = src => { const t = src instanceof HTMLCanvasElement ? new THREE.CanvasTexture(src) : new THREE.Texture(src); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = maxAniso; t.needsUpdate = true; return t; };
-      const tone = make(p.tone), height = p.height === p.tone ? tone : make(p.height);
-      paperMaps = { tone, height };
-      shared.uSpecks.value = 0; shared.uToneMap.value = tone; shared.uToneMean.value = p.mean; shared.uToneStd.value = p.std;
-      for (const s of sheets) s.mat.bumpMap = height;
-    }
+    fillSurface(pagePaper, p);
     paperNow = { ...p.spec };
     return tunePaper(p.spec);
   }
-  function tunePaper({ scale, contrast, bump: b, roughness: r } = {}) {
-    if (scale != null) { shared.uToneRepeat.value.set(scale, scale * ASPECT); paperMaps.height?.repeat.set(scale, scale * ASPECT); }
-    if (contrast != null) shared.uContrast.value = contrast;
-    if (b != null) bump = b;
-    if (r != null) roughness = r;
-    for (const s of sheets) s.mat.bumpScale = bump;
-    applyRoughness();
-    for (const [k, v] of Object.entries({ scale, contrast, bump: b, roughness: r })) if (v != null) paperNow[k] = v;
-    dirty = true;
+  function tunePaper({ scale, contrast, bump, roughness } = {}) {
+    for (const [k, v] of Object.entries({ scale, contrast, bump, roughness })) if (v != null) { pagePaper[k] = v; paperNow[k] = v; }
+    pagePaper.height.repeat.set(pagePaper.scale, pagePaper.scale * ASPECT);
+    refreshSheets();
     return { ...paperNow };
+  }
+  async function loadCover() {
+    const token = ++coverToken, name = cfg.cover.texture;
+    try {
+      const p = await loadPaper(name);
+      if (destroyed || token !== coverToken) return;
+      fillSurface(coverPaper, p); coverLoaded = name;
+      coverPaper.height.repeat.set(coverPaper.scale, coverPaper.scale * ASPECT);
+      refreshSheets();
+    } catch (e) { console.warn('page-turn-book: cover texture', e); }
   }
 
   // ---- curl geometry helpers
@@ -640,7 +665,8 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
       for (const s of sheets) { s.mat.dispose(); s.depth.dispose(); }
       for (const t of loaded.values()) t.dispose();
       for (const t of solids.values()) t.dispose();
-      paperMaps.tone?.dispose(); paperMaps.height?.dispose(); flat.dispose(); grain.dispose();
+      for (const P of [pagePaper, coverPaper]) { if (P.tone !== flat) P.tone.dispose(); if (P.height !== flat && P.height !== P.tone) P.height.dispose(); }
+      flat.dispose(); grain.dispose();
       geometry.dispose(); boardGeometry.dispose(); ground.geometry.dispose(); ground.material.dispose(); renderer.dispose();
       canvas.remove(); hit.remove();
     },
