@@ -149,7 +149,9 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
       float curledU = localU - beyond + beyond * sinc;
       float pz = -uDirection * beyond * versine;
       // board thickness: grows upward when the board is on top of its stack, downward when it's underneath
-      pz += uRigid * (aThick - (1.0 - onTop)) * uThickness;
+      // which way the slab grows flips with the board: on the right it is +z local, once turned over, -z local
+      float base = mix(1.0 - onTop, onTop, 0.5 * (1.0 - uFlipRotation.x));
+      pz += uRigid * (aThick - base) * uThickness;
       float px = curledU * uFold.x - localV * uFold.y;
       float py = curledU * uFold.y + localV * uFold.x;
 
