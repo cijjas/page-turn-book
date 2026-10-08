@@ -9,7 +9,7 @@
 //
 // Attributes: paper, aspect, page-width, start, auto-open, keyboard, fit, perspective, hardcover
 // Properties: pages, renderPage, pageColor, config (any part of DEFAULT_CONFIG)
-// Methods:    next(), prev(), jumpTo(sheet), goToPage(index), setPaper(name|object), tunePaper({…}), set(path, value)
+// Methods:    next(), prev(), jumpTo(sheet), goToPage(index), setPaper(name|object), tunePaper({…}), set(path, value), refreshPage(index)
 // Events:     spread → detail { sheet, left, right };  ready
 
 import { createBook, DEFAULT_CONFIG, mergeConfig } from './engine.js';
@@ -68,6 +68,7 @@ export class PageTurnBook extends HTMLElement {
   jumpTo(sheet) { this.#engine?.jumpTo(sheet); }
   goToPage(index) { this.#engine?.goToPage(index); }
   setPaper(p) { return this.#engine?.setPaper(p); }
+  refreshPage(i) { this.#engine?.refreshPage(i); }
   tunePaper(p) { return this.#engine?.tunePaper(p); }
   set(path, value) {
     if (path === 'book.aspect' || path === 'book.pageWidth') { this.config = { book: { [path.split('.')[1]]: value } }; return; }

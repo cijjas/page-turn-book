@@ -594,7 +594,7 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
   on(window, 'resize', resize);
 
   // ---- page textures: only sheets near the open spread hold one
-  const loaded = new Map(), pending = new Set();
+  const loaded = new Map(), pending = new Set(), gen = new Map();   // gen: bumped when a page must be drawn again
   let queue = [];
   const near = (p, r) => { const s = p >> 1; return s >= turned - r - 1 && s <= turned + r; };
   function attach(p, tex) { const s = sheets[p >> 1]; if (p % 2 === 0) s.mat.map = tex; else s.uniforms.uBackMap.value = tex; dirty = true; }
@@ -614,9 +614,11 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
       const p = queue.shift();
       if (loaded.has(p) || pending.has(p) || !near(p, 5)) continue;
       pending.add(p);
+      const g = gen.get(p) ?? 0;
       Promise.resolve(renderPage(p, { width: PW, height: PH })).then(src => {
         pending.delete(p);
         if (destroyed) return;
+        if ((gen.get(p) ?? 0) !== g) { schedule(); return; }   // stale: the page changed while drawing
         if (src && near(p, 6)) {
           const tex = new THREE.CanvasTexture(src); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = maxAniso;
           attach(p, tex); loaded.set(p, tex);
@@ -651,6 +653,12 @@ export function createBook(host, { pageCount, renderPage, pageColor = '#f3efe6',
     jumpTo,
     goToPage: p => jumpTo(Math.ceil(clamp(p | 0, 0, pageCount - 1) / 2)),
     setPaper, tunePaper,
+    // draw a page again (its content changed)
+    refreshPage(p) {
+      gen.set(p, (gen.get(p) ?? 0) + 1);
+      const t = loaded.get(p); if (t) { t.dispose(); loaded.delete(p); attach(p, blankTex(p)); }
+      schedule();
+    },
     get paper() { return { ...paperNow }; },
     // set('light.sun', 3) or set({ light: { sun: 3 } })
     set(path, value) {

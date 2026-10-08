@@ -4,6 +4,7 @@ import GUI from 'lil-gui';
 import '../src/page-turn-book.js';
 import { DEFAULT_CONFIG, PAPERS } from '../src/page-turn-book.js';
 import { intemperies } from './intemperies.js';
+import { layoutEditor } from './editor.js';
 
 const book = document.getElementById('book');
 const status = document.getElementById('status');
@@ -27,7 +28,7 @@ const TITLES = { cover: 'Hard cover', book: 'Book', material: 'Material', specks
 
 // ---- state (persisted)
 const defaults = () => ({
-  content: 'Sample pages', samplePages: 24,
+  content: 'Sample pages', samplePages: 24, editLayout: true,
   layout: { width: 100, height: 100, stage: '#f6f6f3', outline: false },
   paper: { preset: 'original', scale: 1, contrast: 0, bump: 0, roughness: .5 },
   config: structuredClone(DEFAULT_CONFIG),
@@ -38,7 +39,7 @@ try { const saved = JSON.parse(localStorage.getItem(STORE)); if (saved) state = 
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch {} };
 
 // ---- content
-let userImages = null, intemperiesData = null;
+let userImages = null, intemperiesData = null, editor = null;
 async function loadContent() {
   status.textContent = 'loading pages…';
   if (state.content === 'Intemperies') {
@@ -47,6 +48,7 @@ async function loadContent() {
     book.pageColor = intemperiesData.pageColor;
     book.pageCount = intemperiesData.pageCount;
     book.renderPage = intemperiesData.renderPage;
+    editor ??= layoutEditor(book, intemperiesData);
   } else if (state.content === 'Sample pages') {
     book.pageColor = '#f4f0e6';
     book.pageCount = state.samplePages;
@@ -55,6 +57,7 @@ async function loadContent() {
     book.renderPage = null; book.pageColor = '#f4f0e6';
     book.pages = userImages;
   }
+  if (editor) editor.el.hidden = !state.editLayout || state.content !== 'Intemperies';
 }
 
 // ---- layout
@@ -74,6 +77,7 @@ content.add(state, 'content', ['Intemperies', 'Sample pages', 'Your images…'])
   if (v === 'Your images…') return pickImages();
   save(); await loadContent();
 });
+content.add(state, 'editLayout').name('layout editor (Intemperies)').onChange(v => { save(); if (editor) editor.el.hidden = !v || state.content !== 'Intemperies'; });
 resettable(content.add(state, 'samplePages', 2, 400, 2), BASE.samplePages).name('sample page count').onFinishChange(() => { save(); if (state.content === 'Sample pages') loadContent(); });
 
 const layout = gui.addFolder('Size & stage');
