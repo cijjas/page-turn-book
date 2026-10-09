@@ -6,3 +6,10 @@ dist/
 public/img/
 public/intemperies.json
 public/fonts/
+
+# analysis output (personal)
+public/matches.json
+public/matches.html
+
+# personal dev-only tools
+local/

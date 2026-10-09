@@ -22,7 +22,7 @@ const REBUILD = new Set(['aspect', 'page-width']);
 export class PageTurnBook extends HTMLElement {
   static observedAttributes = ['paper', 'aspect', 'page-width', 'start', 'auto-open', 'fit', 'perspective', 'hardcover'];
 
-  #engine = null; #keys = e => this.#onKey(e); #pages = null; #render = null; #pageColor = '#f3efe6'; #config = {}; #queued = false; #sheet = 0; #count = 0;
+  #engine = null; #keys = e => this.#onKey(e); #pages = null; #render = null; #pageColor = '#f3efe6'; #config = {}; #queued = false; #sheet = 0; #count = 0; #startSet = false;
 
   constructor() {
     super();
@@ -41,7 +41,8 @@ export class PageTurnBook extends HTMLElement {
 
   attributeChangedCallback(name, old, value) {
     if (old === value || !this.#engine) return;
-    if (REBUILD.has(name) || name === 'start') return this.#rebuild();
+    if (name === 'start') { this.#startSet = true; return this.#rebuild(); }
+    if (REBUILD.has(name)) return this.#rebuild();
     if (name === 'paper') this.#engine.setPaper(value || undefined);
     if (name === 'fit') this.#engine.set('book.fit', +value);
     if (name === 'perspective') this.#engine.set('book.perspective', +value);
@@ -94,7 +95,9 @@ export class PageTurnBook extends HTMLElement {
 
   #build() {
     const keepPaper = this.#engine?.paper;
-    const keepSheet = this.#engine ? this.#sheet : null;
+    // a rebuild keeps the open sheet, unless `start` was just set
+    const keepSheet = this.#engine && !this.#startSet ? this.#sheet : null;
+    this.#startSet = false;
     this.#engine?.destroy(); this.#engine = null;
     const sources = this.#pages ?? [...this.querySelectorAll(':scope > img')].map(img => img.currentSrc || img.src);
     const pageCount = this.#render ? (this.#config.pageCount ?? this.getAttribute('pages') ?? 0) | 0 : sources.length;
